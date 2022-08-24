@@ -6,10 +6,7 @@ from tabulate import tabulate
 from configparser import ConfigParser
 import pandas as pd
 
-
-XT='X-Transmission-Session-Id'
-XV='LeM5PUM7XHwdQdLNYppmx1DG6ectOHl4QNW28O1Hoj1EO2W4'
-
+XT = 'X-Transmission-Session-Id'
 
 cfg = ConfigParser()
 with open('cfg.ini') as f:
@@ -18,6 +15,7 @@ with open('cfg.ini') as f:
     login = auth['login']
     password = auth['password']
     url = cfg['default']['url']
+    XV = auth.get('XV', 'A' * 48)
 
 
 def api(*args, **kwargs):
@@ -31,40 +29,39 @@ def api(*args, **kwargs):
         print(f'old {XV=}')
         XV = re.search('Id: ([0-9a-zA-Z])+<', r.text).group()[4:-1]
         print(f'new {XV=}')
+        with open('cfg.ini', 'wt') as f:
+            cfg.set('auth', 'XV', XV)
+            cfg.write(f)
         kwargs.setdefault('headers', {}).setdefault(XT, XV)
         r = requests.post(*args, **kwargs)
         assert r.status_code != 409
     return r
 
 
-def process(e):
+def process(e, dry_run, ignore_time_diff=3600):
     ddir = Path(e['downloadDir'])
-    # if ddir.parts[-1] == 'Downloads':
-    #     return
     roots = set()
     for file in e['files']:
         roots.add(ddir / PurePath(file['name']).parts[0])
-    del e['files']
     added_date = e['addedDate']
-    # print(e)
-    # assert(len(roots) == 1)
     for r in roots:
         st = r.stat()
-        if abs(st.st_ctime - added_date) < 3_600:
+        if abs(st.st_ctime - added_date) < ignore_time_diff:
             break
         print(r)
-        print(f'atime={st.st_atime-added_date} mtime={st.st_mtime-added_date} ctime={st.st_ctime-added_date}')
-        setctime(r, added_date)
-        # st = r.stat()
-        # print(f'atime={st.st_atime-added_date} mtime={st.st_mtime-added_date} ctime={st.st_ctime-added_date}')
+        print(f'atime={st.st_atime - added_date} mtime={st.st_mtime - added_date} ctime={st.st_ctime - added_date}')
+        if not dry_run:
+            setctime(r, added_date)
+            st = r.stat()
+            print(f'atime={st.st_atime-added_date} mtime={st.st_mtime-added_date} ctime={st.st_ctime-added_date}')
 
 
-def main():
+def main(dry_run=True, n_torrents=1500):
     r = api(
-        json = {
+        json={
             'method': 'torrent-get',
             'arguments': {
-                'ids': list(range(1, 1500)),
+                'ids': list(range(1, 1 + n_torrents)),
                 'fields': [
                     'addedDate', 'downloadDir', 'downloadedEver', 'error', 'name', 'status',
                     'files'
@@ -74,14 +71,12 @@ def main():
     )
     r = r.json()['arguments']['torrents']
     for e in r:
-        process(e)
-
-    # df = pd.DataFrame(r)
-    # print(tabulate(df, headers='keys'))
-
+        process(e, dry_run)
+    df = pd.DataFrame(r)
+    df.index += 1
+    df.drop(columns=['files'], inplace=True)
+    print(tabulate(df, headers='keys'))
 
 
 if __name__ == '__main__':
     main()
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
